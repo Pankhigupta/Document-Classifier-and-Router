@@ -4,7 +4,7 @@ import os
 
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-SENDER_EMAIL = "pankhigupta440@gmail.com"
+SENDER_EMAIL = "youremailhere"
 SENDER_PASSWORD = "oxexefdunwhhbwrm"  # Use App Passwords, not raw passwords
 
 
