@@ -21,9 +21,13 @@ clf = joblib.load(MODEL_PATH)
 STORAGE_DIR = "storage"
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
-CONFIDENCE_THRESHOLD = 0.60
+CONFIDENCE_THRESHOLD = 0.50
 
 app = FastAPI(title="IDMS Classifier + Router")
+
+BASE_STORAGE_DIR = "storage"
+MANUAL_REVIEW_DIR = os.path.join(BASE_STORAGE_DIR, "manual_review")
+os.makedirs(MANUAL_REVIEW_DIR, exist_ok=True)
 
 
 # --------------------------------------------------------
@@ -92,12 +96,12 @@ def classify_text(extracted_text: str):
 # --------------------------------------------------------
 def route_and_send(predicted_label, document_path, probability):
     # Low confidence fallback
-    # if probability is not None and probability < CONFIDENCE_THRESHOLD:
-    #     return {
-    #         "route_to": "manual_review",
-    #         "emails": [],
-    #         "note": "low_confidence_below_threshold",
-    #     }
+    if probability is not None and probability < CONFIDENCE_THRESHOLD:
+        return {
+            "route_to": "manual_review",
+            "emails": [],
+            "note": "low_confidence_below_threshold",
+        }
 
     # 1. Map doc type → department
     department = ROUTING_RULES.get(predicted_label)
@@ -127,6 +131,44 @@ def route_and_send(predicted_label, document_path, probability):
         "route_to": department,
         "emails": emails,
         "note": "email_sent_successfully",
+    }
+
+# route and store to department folder:
+
+
+def route_and_store(predicted_label, document_path, probability):
+    # Low confidence → manual review
+    if probability is not None and probability < CONFIDENCE_THRESHOLD:
+        target_dir = MANUAL_REVIEW_DIR
+        note = "low_confidence_manual_review"
+    else:
+        department = ROUTING_RULES.get(predicted_label)
+        if not department:
+            target_dir = MANUAL_REVIEW_DIR
+            note = "unmapped_label_manual_review"
+        else:
+            target_dir = os.path.join(BASE_STORAGE_DIR, department)
+            note = "routed_successfully"
+
+    os.makedirs(target_dir, exist_ok=True)
+
+    if document_path:
+        filename = os.path.basename(document_path)
+        target_path = os.path.join(target_dir, filename)
+
+        # Avoid overwrite
+        if os.path.exists(target_path):
+            base, ext = os.path.splitext(filename)
+            target_path = os.path.join(target_dir, f"{base}_1{ext}")
+
+        shutil.move(document_path, target_path)
+    else:
+        target_path = None
+
+    return {
+        "route_to": os.path.basename(target_dir),
+        "stored_at": target_path,
+        "note": note,
     }
 
 
@@ -181,6 +223,9 @@ async def ingest(file: UploadFile = File(None), text: str = Form(None)):
     # ROUTE + SEND EMAIL
     routing_info = route_and_send(predicted_label, saved_path, probability)
 
+    # route +store email
+    routing_info = route_and_store(predicted_label, saved_path, probability)
+
     return JSONResponse({
         "predicted_label": predicted_label,
         "probability": probability,
@@ -193,15 +238,28 @@ async def ingest(file: UploadFile = File(None), text: str = Form(None)):
 # MANUAL TESTING
 # --------------------------------------------------------
 if __name__ == "__main__":
-    test_doc = "storage/test_contract.pdf"
+    test_doc = "storage/CV.pdf"
+
+    if not os.path.exists(test_doc):
+        raise FileNotFoundError(f"{test_doc} not found")
+
     print("Testing...")
-    print("Extracting...")
-    text = open(test_doc, "rb").read()
-    extracted = extract_text_from_pdf_bytes(text)
+    print("Extracting text...")
+
+    with open(test_doc, "rb") as f:
+        data = f.read()
+
+    extracted = extract_text_from_pdf_bytes(data)
 
     print("Classifying...")
     pred, proba = classify_text(extracted)
-    print("Prediction:", pred, "Prob:", proba)
+    print(f"Prediction: {pred} | Probability: {proba}")
 
     print("Routing...")
     print(route_and_send(pred, test_doc, proba))
+
+    print("Routing and storing...")
+    routing_result = route_and_store(pred, test_doc, proba)
+
+    print("Result:")
+    print(routing_result)

@@ -10,6 +10,3 @@ python-magic    # optional, for mime detection
 pandas
 fitz
 pdf2image
-PyMuPDF 
-reportlab
-secure-smtplib
